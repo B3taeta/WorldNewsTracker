@@ -3,7 +3,7 @@ import pandas as pd
 import math
 from utils import REGION_MAPPING, fetch_web_data, render_results_cards, render_results_table
 
-st.title("📰 World Wide Web Hub")
+st.title("📰 World News Tracker")
 st.markdown("Ricerca le notizie dal Web in modo esteso. I risultati sono impaginati (Max 10 per pagina).")
 
 # --- Google-like Search Bar ---
