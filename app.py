@@ -1,6 +1,6 @@
 import streamlit as st
 
-st.set_page_config(page_title="World Wide Web Tracker", layout="wide")
+st.set_page_config(page_title="World News Tracker", layout="wide")
 
 # Costruzione del menu di navigazione ufficiale a pagine laterali
 pg = st.navigation([
