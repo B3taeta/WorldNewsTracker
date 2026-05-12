@@ -378,3 +378,117 @@ def render_results_table(df_subset: pd.DataFrame):
         "Link": st.column_config.LinkColumn(get_text("web_page"))
     }
     st.dataframe(df_show, column_config=column_config, use_container_width=True)
+
+
+# ─────────────────────────────────────────────
+# WHO NEWS — constants, classifier, fetcher
+# ─────────────────────────────────────────────
+
+WHO_RSS_URLS: dict = {
+    "en": "https://www.who.int/rss-feeds/news-english.xml",
+    "it": "https://www.who.int/rss-feeds/news-italian.xml",
+    "fr": "https://www.who.int/rss-feeds/news-french.xml",
+    "es": "https://www.who.int/rss-feeds/news-spanish.xml",
+}
+
+_WHO_HEADERS: dict = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+# Keyword → topic mapping for auto-classifying WHO articles
+WHO_TOPIC_KEYWORDS: dict = {
+    "🦠 Disease Outbreaks":       ["outbreak", "hantavirus", "mpox", "monkeypox", "ebola",
+                                    "cholera", "polio", "measles", "dengue", "malaria",
+                                    "flu", "influenza", "rabies", "plague", "typhoid",
+                                    "yellow fever", "marburg"],
+    "🚨 Health Emergencies":      ["emergency", "humanitarian", "crisis", "disaster",
+                                    "response", "preparedness", "alert", "surge", "conflict"],
+    "💉 Vaccines & Immunization": ["vaccine", "vaccination", "immunization", "immunisation",
+                                    "dose", "booster", "inoculation", "jab"],
+    "🧬 Infectious Diseases":     ["infectious", "virus", "bacterial", "fungal", "parasite",
+                                    "infection", "contagious", "pathogen", "antimicrobial",
+                                    "antibiotic", "resistance", "AMR", "HIV", "AIDS",
+                                    "tuberculosis", "TB", "hepatitis"],
+    "🧠 Mental Health":           ["mental", "depression", "anxiety", "suicide", "wellbeing",
+                                    "psychosocial", "psychiatric", "burnout", "stress"],
+    "🍎 Nutrition":               ["nutrition", "malnutrition", "food", "obesity", "diet",
+                                    "hunger", "stunting", "wasting", "famine"],
+    "🌍 Climate & Environment":   ["climate", "heat", "pollution", "air quality",
+                                    "environmental", "carbon", "wildfire", "flood", "drought"],
+    "👶 Maternal & Child Health": ["maternal", "child", "newborn", "pregnancy", "infant",
+                                    "neonatal", "breastfeeding", "midwif", "birth"],
+    "♋ Cancer":                   ["cancer", "tumor", "tumour", "oncology", "carcinoma",
+                                    "lymphoma", "leukaemia", "leukemia"],
+    "🚬 Tobacco & Substances":    ["tobacco", "smoking", "cigarette", "alcohol", "drug",
+                                    "substance", "addiction"],
+    "🏥 Health Systems":          ["health system", "primary care", "universal health", "UHC",
+                                    "coverage", "workforce", "hospital", "financing"],
+    "🔬 Research & Science":      ["research", "study", "trial", "findings", "data",
+                                    "evidence", "report", "survey", "analysis", "lancet"],
+    "🤝 Global Cooperation":      ["member states", "agreement", "treaty", "resolution",
+                                    "assembly", "Director-General", "partnership",
+                                    "United Nations"],
+}
+
+
+def classify_who_topics(title: str, snippet: str = "") -> list:
+    """Return topic labels for a WHO article by keyword matching on title + snippet."""
+    text = (title + " " + snippet).lower()
+    matched = [
+        topic for topic, keywords in WHO_TOPIC_KEYWORDS.items()
+        if any(kw.lower() in text for kw in keywords)
+    ]
+    return matched if matched else ["📋 General"]
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_who_news(lang: str = "en") -> pd.DataFrame:
+    """
+    Fetch WHO official RSS feed (language-specific, falls back to English).
+    Articles are auto-classified into health topics via keyword matching.
+    Cached for 5 minutes.
+    """
+    data_list: list = []
+    urls_to_try = list({WHO_RSS_URLS.get(lang, WHO_RSS_URLS["en"]), WHO_RSS_URLS["en"]})
+
+    for url in urls_to_try:
+        try:
+            req = urllib.request.Request(url, headers=_WHO_HEADERS)
+            response = urllib.request.urlopen(req, timeout=10)
+            root = ET.fromstring(response.read())
+
+            for item in root.findall(".//item"):
+                title_el  = item.find("title")
+                link_el   = item.find("link")
+                date_el   = item.find("pubDate")
+                desc_el   = item.find("description")
+
+                title_text   = title_el.text.strip()  if title_el  is not None and title_el.text  else "N/A"
+                link_text    = link_el.text.strip()   if link_el   is not None and link_el.text   else "N/A"
+                date_text    = date_el.text.strip()   if date_el   is not None and date_el.text   else "N/A"
+                snippet_text = desc_el.text           if desc_el   is not None and desc_el.text   else "N/A"
+
+                data_list.append({
+                    "Titolo":  title_text,
+                    "Data":    date_text,
+                    "Fonte":   "WHO",
+                    "Snippet": snippet_text,
+                    "Link":    link_text,
+                    "Topics":  classify_who_topics(title_text, snippet_text),
+                })
+
+            if data_list:
+                break  # success — skip fallback URL
+
+        except Exception:
+            continue
+
+    df = pd.DataFrame(data_list)
+    if not df.empty:
+        df = df.drop_duplicates(subset=["Link"])
+        df["Data_Formatted"] = df["Data"].apply(format_date)
+        df["Data_Parse"] = pd.to_datetime(df["Data"], format="mixed", errors="coerce")
+        df = df.sort_values(by="Data_Parse", ascending=False).reset_index(drop=True)
+
+    return df
